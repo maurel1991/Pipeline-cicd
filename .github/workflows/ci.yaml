@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: devops-cicd-lab
+  AWS_ROLE_ARN: arn:aws:iam::296945066713:role/github-actions-devops-cicd-lab
+
 jobs:
   test:
     name: Python tests
@@ -68,4 +73,36 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit dependencies
-        run: pip-audit -r requirements.txt  
+        run: pip-audit -r requirements.txt 
+        
+  deploy:
+    name: Build and push image to ECR
+    needs: [test, docker-build, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            -t ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
+            app
+
+      - name: Push image
+        run: |
+          docker push ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
